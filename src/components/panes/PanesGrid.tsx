@@ -20,6 +20,17 @@ interface PanesGridProps {
   fallbackProjectName: string
 }
 
+function groupByWorktree(entries: { pane: DmuxPane; index: number }[]) {
+  const seen = new Map<string, { pane: DmuxPane; index: number }[]>();
+  const order: string[] = [];
+  for (const entry of entries) {
+    const key = entry.pane.worktreePath ?? `__shell__${entry.pane.id}`;
+    if (!seen.has(key)) { seen.set(key, []); order.push(key); }
+    seen.get(key)!.push(entry);
+  }
+  return order.map(k => seen.get(k)!);
+}
+
 const PanesGrid: React.FC<PanesGridProps> = memo(({
   panes,
   selectedIndex,
@@ -49,6 +60,11 @@ const PanesGrid: React.FC<PanesGridProps> = memo(({
     return map
   }, [actionLayout.actionItems])
 
+  const selectedPaneHasWorktree = useMemo(() => {
+    const selectedPane = selectedIndex < panes.length ? panes[selectedIndex] : undefined
+    return !!selectedPane?.worktreePath
+  }, [selectedIndex, panes])
+
   // Determine which project group the current selection belongs to
   const activeProjectRoot = useMemo(() => {
     // Check if selection is a pane
@@ -67,11 +83,11 @@ const PanesGrid: React.FC<PanesGridProps> = memo(({
     terminalAction: ProjectActionItem,
     selIdx: number,
     isActiveGroup: boolean,
-    navigable: boolean
+    navigable: boolean,
+    selectedPaneHasWorktree: boolean
   ) => {
     const newSelected = navigable && selIdx === newAgentAction.index
     const termSelected = navigable && selIdx === terminalAction.index
-    const eitherSelected = newSelected || termSelected
 
     const renderLabel = (kind: "new-agent" | "terminal", isSelected: boolean) => {
       const color = isSelected ? COLORS.selected : COLORS.border
@@ -91,6 +107,13 @@ const PanesGrid: React.FC<PanesGridProps> = memo(({
         {renderLabel("new-agent", newSelected)}
         <Text color={COLORS.border}>{"  "}</Text>
         {renderLabel("terminal", termSelected)}
+        {isActiveGroup && (
+          <Text color={COLORS.border}>
+            {"  "}
+            <Text color={selectedPaneHasWorktree ? "cyan" : COLORS.border}>[a]</Text>
+            {"dd agent"}
+          </Text>
+        )}
       </Box>
     )
   }
@@ -115,30 +138,32 @@ const PanesGrid: React.FC<PanesGridProps> = memo(({
             )
           })()}
 
-          {group.panes.map((entry) => {
-            const pane = entry.pane
-            // Apply the runtime status to the pane
-            const paneWithStatus = {
-              ...pane,
-              agentStatus: agentStatuses?.get(pane.id) || pane.agentStatus,
-            }
-            const paneIndex = entry.index
-            const isSelected = selectedIndex === paneIndex
-            const isDevSource = isActiveDevSourcePath(
-              pane.worktreePath,
-              activeDevSourcePath
-            )
+          {groupByWorktree(group.panes).flatMap((worktreeGroup) =>
+            worktreeGroup.map((entry, posInGroup) => {
+              const pane = entry.pane
+              // Apply the runtime status to the pane
+              const paneWithStatus = {
+                ...pane,
+                agentStatus: agentStatuses?.get(pane.id) || pane.agentStatus,
+              }
+              const paneIndex = entry.index
+              const isSelected = selectedIndex === paneIndex
+              const isDevSource = isActiveDevSourcePath(
+                pane.worktreePath,
+                activeDevSourcePath
+              )
 
-            return (
-              <PaneCard
-                key={pane.id}
-                pane={paneWithStatus}
-                isDevSource={isDevSource}
-                selected={isSelected}
-
-              />
-            )
-          })}
+              return (
+                <PaneCard
+                  key={pane.id}
+                  pane={paneWithStatus}
+                  isDevSource={isDevSource}
+                  selected={isSelected}
+                  isSibling={posInGroup > 0}
+                />
+              )
+            })
+          )}
 
           {!isLoading && actionLayout.multiProjectMode && activeProjectRoot !== group.projectRoot && (
             <Text>{" "}</Text>
@@ -153,7 +178,7 @@ const PanesGrid: React.FC<PanesGridProps> = memo(({
               return null
             }
 
-            return renderActionRow(newAgentAction, terminalAction, selectedIndex, true, false)
+            return renderActionRow(newAgentAction, terminalAction, selectedIndex, true, false, selectedPaneHasWorktree)
           })()}
 
           {groupIndex < paneGroups.length - 1 && <Text>{" "}</Text>}
@@ -168,7 +193,7 @@ const PanesGrid: React.FC<PanesGridProps> = memo(({
           return null
         }
 
-        return renderActionRow(newAgentAction, terminalAction, selectedIndex, true, true)
+        return renderActionRow(newAgentAction, terminalAction, selectedIndex, true, true, selectedPaneHasWorktree)
       })()}
     </Box>
   )
