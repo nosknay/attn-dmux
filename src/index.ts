@@ -27,6 +27,8 @@ import { SettingsManager } from './utils/settingsManager.js';
 import { atomicWriteJson } from './utils/atomicWrite.js';
 import { buildDevWatchCommand, buildDevWatchRespawnCommand } from './utils/devWatchCommand.js';
 import { buildPaneExitedHookCommandForSession } from './utils/tmuxHookCommands.js';
+import { startDmuxServer } from './server/index.js';
+import { findAvailablePort } from './utils/port.js';
 import {
   resolveEnabledAgentsSelection,
   type AgentName,
@@ -514,6 +516,12 @@ class Dmux {
 
     // Update state manager with project info
     this.stateManager.updateProjectInfo(this.projectName, this.sessionName, this.projectRoot, this.panesFile);
+
+    // Start HTTP server for WAL and pane API callbacks
+    const serverPort = await findAvailablePort([3142]);
+    startDmuxServer(this.stateManager, serverPort).catch(err => {
+      console.error('Failed to start dmux server:', err);
+    });
 
     // Logging system is ready (removed debug logs to reduce clutter)
 
