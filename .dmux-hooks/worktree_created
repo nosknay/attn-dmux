@@ -17,10 +17,10 @@ for f in .env.local .env.development; do
   [ -f "$DMUX_ROOT/$f" ] && cp "$DMUX_ROOT/$f" "$DMUX_WORKTREE_PATH/$f"
 done
 
-# Append WAL instructions to CLAUDE.md so the agent knows how to coordinate
-if [ -f "$DMUX_WORKTREE_PATH/CLAUDE.md" ]; then
-  cat >> "$DMUX_WORKTREE_PATH/CLAUDE.md" <<'EOF'
-
+# Write WAL instructions to .claude/CLAUDE.md — picked up by Claude Code,
+# gitignored, and doesn't touch any tracked repo files.
+mkdir -p "$DMUX_WORKTREE_PATH/.claude"
+cat > "$DMUX_WORKTREE_PATH/.claude/CLAUDE.md" <<'EOF'
 ## WAL — inter-agent coordination
 
 Other agents may be working in parallel panes. Use the WAL helpers to coordinate:
@@ -37,6 +37,5 @@ wal_read                        # see what other agents have written this sessio
 wal_history "jiraKey=JNY-1234"  # query findings from previous sessions
 ```
 EOF
-fi
 
 echo "[Hook] Worktree ready: $DMUX_SLUG ($REPO_TYPE)"
