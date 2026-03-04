@@ -30,7 +30,7 @@ source "$DMUX_ROOT/.dmux-hooks/lib/attentive.sh"
 wal_write "intent"    "about to modify AccountService.java"    # signal intent before touching shared files
 wal_write "discovery" "param store key /prod/db-url is unused" # share findings with other agents
 wal_write "blocked"   "waiting on JNY-5678 to merge"           # signal blockers
-wal_write "done"      "PR opened"                              # signal completion
+wal_write "done"      "PR opened: $DMUX_SLUG"                              # signal completion
 
 wal_read                        # see what other agents have written this session
 wal_history "jiraKey=JNY-1234"  # query findings from previous sessions
