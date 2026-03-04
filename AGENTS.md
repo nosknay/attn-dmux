@@ -163,3 +163,29 @@ files — keep it in the lib file so it stays consolidated and easy to update.
 **Slug generation:** `src/utils/slug.ts` has been modified to extract JIRA keys from
 prompts (e.g. `"JNY-1234: fix the auth bug"` → branch `jny-1234-fix-auth-bug`) and to
 use `attn-` as the fallback prefix instead of `dmux-`.
+
+**WAL (Write-Ahead Log):** dmux runs an HTTP server on startup (default port 3142) that
+backs a shared WAL stored at `~/.dmux-workspaces/attn-wal.db` (DuckDB). Agents in
+parallel panes use it to signal intent, share discoveries, and avoid conflicts.
+
+The `worktree_created` hook appends WAL usage instructions to each worktree's `CLAUDE.md`
+so agents know the helpers are available. The helpers live in `.dmux-hooks/lib/attentive.sh`:
+
+```bash
+source "$DMUX_ROOT/.dmux-hooks/lib/attentive.sh"
+
+wal_write "intent"    "about to modify AccountService.java"
+wal_write "discovery" "param store key /prod/db-url is unused"
+wal_write "blocked"   "waiting on JNY-5678 to merge"
+wal_write "done"      "PR opened"
+
+wal_read                        # current session entries
+wal_history "jiraKey=JNY-1234"  # cross-session query
+```
+
+Query the DB directly at any time:
+
+```bash
+duckdb ~/.dmux-workspaces/attn-wal.db \
+  "SELECT slug, type, payload, ts FROM wal_entries WHERE jira_key = 'JNY-1234' ORDER BY ts"
+```
