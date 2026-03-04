@@ -70,7 +70,7 @@
     "dmux": "./dmux"
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.0.0",
+    "@duckdb/node-api": "1.4.4-r.3",
     "chalk": "^5.3.0",
     "chokidar": "^4.0.3",
     "ink": "^5.0.1",
