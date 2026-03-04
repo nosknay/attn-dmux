@@ -37,12 +37,12 @@ wal_write() {
   curl -s -X POST "http://localhost:$DMUX_SERVER_PORT/api/wal" \
     -H "Content-Type: application/json" \
     -d "$(jq -n \
-      --arg paneId  "$DMUX_PANE_ID" \
+      --arg pane_id "$DMUX_PANE_ID" \
       --arg slug    "$DMUX_SLUG" \
       --arg agent   "$DMUX_AGENT" \
       --arg type    "$type" \
       --arg payload "$payload" \
-      '{paneId:$paneId,slug:$slug,agent:$agent,type:$type,payload:$payload}')" > /dev/null
+      '{pane_id:$pane_id,slug:$slug,agent:$agent,type:$type,payload:$payload}')" > /dev/null
 }
 
 # Read all WAL entries for the current session

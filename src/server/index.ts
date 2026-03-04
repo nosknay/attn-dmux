@@ -30,7 +30,7 @@ export async function startDmuxServer(
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', async () => {
-        const entry = await walStore.append({ sessionId: sessionName, ...JSON.parse(body) });
+        const entry = await walStore.append({ session_id: sessionName, ...JSON.parse(body) });
         const data = `data: ${JSON.stringify(entry)}\n\n`;
         sseClients.forEach(client => client.write(data));
         res.writeHead(201, { 'Content-Type': 'application/json' });
