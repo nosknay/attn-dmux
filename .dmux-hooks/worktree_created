@@ -36,7 +36,9 @@ wal_read                        # see what other agents have written this sessio
 wal_history "jiraKey=JNY-1234"  # query findings from previous sessions
 ```
 
-Call `wal_read` on demand — just before you need the context (before acting on a file, before giving feedback). Do not call it at startup.'
+Call `wal_read` on demand — just before you need the context (before acting on a file, before giving feedback). Do not call it at startup.
+
+If this worktree already exists (work started in a prior dmux session), there is almost certainly a WAL history for this ticket. Always run `wal_history "jiraKey=<TICKET>"` before starting — `wal_read` only shows the current session.'
 
 # Claude Code — .claude/CLAUDE.md (never tracked, Claude-specific dir)
 mkdir -p "$DMUX_WORKTREE_PATH/.claude"
