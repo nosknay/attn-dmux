@@ -18,6 +18,7 @@ import { recalculateAndApplyLayout } from './layoutManager.js';
 import { buildWorktreePaneTitle } from './paneTitle.js';
 import { SettingsManager } from './settingsManager.js';
 import { LogService } from '../services/LogService.js';
+import { randomUUID } from 'crypto';
 import { StateManager } from '../shared/StateManager.js';
 import { triggerHook } from './hooks.js';
 
@@ -79,8 +80,7 @@ export async function attachAgentToWorktree(
 
   // Generate a unique slug for this sibling
   const slug = generateSiblingSlugForTargetPane(targetPane, existingPanes);
-  // Include a random suffix to avoid collisions if two siblings are attached in the same millisecond
-  const siblingPaneId = `dmux-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+  const siblingPaneId = `dmux-${randomUUID()}`;
 
   const tmuxService = TmuxService.getInstance();
   const originalPaneId = tmuxService.getCurrentPaneIdSync();
