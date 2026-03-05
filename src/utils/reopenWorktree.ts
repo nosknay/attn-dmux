@@ -1,6 +1,8 @@
 import path from 'path';
 import * as fs from 'fs';
+import { randomUUID } from 'crypto';
 import { TmuxService } from '../services/TmuxService.js';
+import { StateManager } from '../shared/StateManager.js';
 import {
   setupSidebarLayout,
   getTerminalDimensions,
@@ -53,6 +55,7 @@ export async function reopenWorktree(
   const sessionProjectRoot = optionsSessionProjectRoot
     || (optionsSessionConfigPath ? path.dirname(path.dirname(optionsSessionConfigPath)) : projectRoot);
 
+  const paneId = `dmux-${randomUUID()}`;
   const tmuxService = TmuxService.getInstance();
   const originalPaneId = tmuxService.getCurrentPaneIdSync();
 
@@ -145,6 +148,21 @@ export async function reopenWorktree(
   // Wait for CD to complete
   await new Promise((resolve) => setTimeout(resolve, 300));
 
+  // Inject DMUX env vars into the pane shell so WAL helpers work
+  const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
+  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
+  const envCmd = [
+    'export',
+    `DMUX_ROOT=${sq(projectRoot)}`,
+    `DMUX_SERVER_PORT=${serverPort}`,
+    `DMUX_PANE_ID=${sq(paneId)}`,
+    `DMUX_SLUG=${sq(slug)}`,
+    `DMUX_WORKTREE_PATH=${sq(worktreePath)}`,
+    `DMUX_BRANCH=${sq(slug)}`,
+  ].join(' ');
+  await tmuxService.sendShellCommand(paneInfo, envCmd);
+  await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
+
   // Detect which agent to use - prefer enabled agents and then fallback order.
   const installedAgents = await getInstalledAgents();
   const enabledAgents = filterEnabledAgents(installedAgents, settings.enabledAgents);
@@ -179,7 +197,7 @@ export async function reopenWorktree(
 
   // Create the pane object
   const newPane: DmuxPane = {
-    id: `dmux-${Date.now()}`,
+    id: paneId,
     slug,
     prompt: '(Reopened session)',
     paneId: paneInfo,

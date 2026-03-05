@@ -1,18 +1,18 @@
-import { execSync } from 'child_process';
+import { spawnSync } from 'child_process';
 
 export const callClaudeCode = async (prompt: string): Promise<string | null> => {
   try {
-    const result = execSync(
-      `echo "${prompt.replace(/"/g, '\\"')}" | claude --no-interactive --max-turns 1 2>/dev/null | head -n 5`,
-      {
-        encoding: 'utf-8',
-        stdio: 'pipe',
-        timeout: 5000,
-      }
-    );
-    const lines = result.trim().split('\n');
-    const response = lines.join(' ').trim();
-    return response || null;
+    const result = spawnSync('claude', ['--no-interactive', '--max-turns', '1'], {
+      input: prompt,
+      encoding: 'utf-8',
+      // stderr ignored (equivalent to 2>/dev/null); stdout captured
+      stdio: ['pipe', 'pipe', 'ignore'],
+      timeout: 5000,
+    });
+    if (result.status !== 0 || !result.stdout) return null;
+    // Replicate `head -n 5`
+    const lines = result.stdout.trim().split('\n').slice(0, 5);
+    return lines.join(' ').trim() || null;
   } catch {
     return null;
   }

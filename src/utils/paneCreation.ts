@@ -1,6 +1,7 @@
 import path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
+import { randomUUID } from 'crypto';
 import type { DmuxPane, DmuxConfig } from '../types.js';
 import { TmuxService } from '../services/TmuxService.js';
 import {
@@ -15,6 +16,7 @@ import { triggerHook, initializeHooksDirectory } from './hooks.js';
 import { TMUX_LAYOUT_APPLY_DELAY, TMUX_SPLIT_DELAY } from '../constants/timing.js';
 import { atomicWriteJsonSync } from './atomicWrite.js';
 import { LogService } from '../services/LogService.js';
+import { StateManager } from '../shared/StateManager.js';
 import {
   appendSlugSuffix,
   buildAgentCommand,
@@ -166,6 +168,7 @@ export async function createPane(
   const generatedSlug = slugBase || await generateSlug(prompt);
   const slug = appendSlugSuffix(generatedSlug, slugSuffix);
   const branchName = branchPrefix ? `${branchPrefix}${slug}` : slug;
+  const paneId = `dmux-${randomUUID()}`;
   const tmuxService = TmuxService.getInstance();
 
   const worktreePath = path.join(projectRoot, '.dmux', 'worktrees', slug);
@@ -313,7 +316,7 @@ export async function createPane(
 
   // Trigger pane_created hook (after pane created, before worktree)
   await triggerHook('pane_created', projectRoot, undefined, {
-    DMUX_PANE_ID: `dmux-${Date.now()}`,
+    DMUX_PANE_ID: paneId,
     DMUX_SLUG: slug,
     DMUX_PROMPT: prompt,
     DMUX_AGENT: agent || 'unknown',
@@ -430,6 +433,22 @@ export async function createPane(
     // Don't throw - let the pane stay open so user can debug
   }
 
+  // Inject DMUX env vars into the pane shell so WAL helpers work
+  const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
+  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
+  const envCmd = [
+    'export',
+    `DMUX_ROOT=${sq(projectRoot)}`,
+    `DMUX_SERVER_PORT=${serverPort}`,
+    `DMUX_PANE_ID=${sq(paneId)}`,
+    `DMUX_SLUG=${sq(slug)}`,
+    `DMUX_AGENT=${sq(agent || 'unknown')}`,
+    `DMUX_WORKTREE_PATH=${sq(worktreePath)}`,
+    `DMUX_BRANCH=${sq(branchName)}`,
+  ].join(' ');
+  await tmuxService.sendShellCommand(paneInfo, envCmd);
+  await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
+
   // Launch agent if specified
   const hasInitialPrompt = !!(prompt && prompt.trim());
 
@@ -514,7 +533,7 @@ export async function createPane(
 
   // Create the pane object
   const newPane: DmuxPane = {
-    id: `dmux-${Date.now()}`,
+    id: paneId,
     slug,
     branchName: branchName !== slug ? branchName : undefined, // Only store if different from slug
     prompt: prompt || 'No initial prompt',
