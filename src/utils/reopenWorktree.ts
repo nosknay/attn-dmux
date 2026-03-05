@@ -208,7 +208,8 @@ export async function reopenWorktree(
     autopilot: settings.enableAutopilotByDefault ?? false,
   };
 
-  // Handle welcome pane destruction if first content pane
+  // Pre-save pane to config before destroying welcome pane (first content pane only),
+  // so loadPanes sees a pane in config and doesn't recreate the welcome pane.
   if (isFirstContentPane) {
     try {
       const configContent = fs.readFileSync(configPath, 'utf-8');
@@ -217,12 +218,18 @@ export async function reopenWorktree(
       config.panes = [...existingPanes, newPane];
       config.lastUpdated = new Date().toISOString();
       atomicWriteJsonSync(configPath, config);
-
-      const { destroyWelcomePaneCoordinated } = await import('./welcomePaneManager.js');
-      destroyWelcomePaneCoordinated(sessionProjectRoot);
     } catch {
       // Log but don't fail
     }
+  }
+
+  // Always destroy welcome pane if one exists — shell panes can make isFirstContentPane
+  // false even when no real content pane exists yet.
+  try {
+    const { destroyWelcomePaneCoordinated } = await import('./welcomePaneManager.js');
+    destroyWelcomePaneCoordinated(sessionProjectRoot);
+  } catch {
+    // Ignore - welcome pane cleanup is not critical
   }
 
   // Switch back to the original pane
