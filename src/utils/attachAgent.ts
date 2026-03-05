@@ -18,6 +18,8 @@ import { recalculateAndApplyLayout } from './layoutManager.js';
 import { buildWorktreePaneTitle } from './paneTitle.js';
 import { SettingsManager } from './settingsManager.js';
 import { LogService } from '../services/LogService.js';
+import { StateManager } from '../shared/StateManager.js';
+import { triggerHook } from './hooks.js';
 
 export interface AttachAgentOptions {
   targetPane: DmuxPane;
@@ -77,6 +79,8 @@ export async function attachAgentToWorktree(
 
   // Generate a unique slug for this sibling
   const slug = generateSiblingSlugForTargetPane(targetPane, existingPanes);
+  // Include a random suffix to avoid collisions if two siblings are attached in the same millisecond
+  const siblingPaneId = `dmux-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 
   const tmuxService = TmuxService.getInstance();
   const originalPaneId = tmuxService.getCurrentPaneIdSync();
@@ -135,6 +139,25 @@ export async function attachAgentToWorktree(
   // Small delay for cd to complete
   await new Promise(r => setTimeout(r, 300));
 
+  // Inject DMUX env vars so WAL helpers work in this pane's shell (Gap 1).
+  // Values are single-quoted and internal single quotes escaped to handle any
+  // special characters ($, ", `, etc.) that may appear in file system paths.
+  const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
+  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
+  const envCmd = [
+    'export',
+    `DMUX_ROOT=${sq(projectRoot)}`,
+    `DMUX_SERVER_PORT=${serverPort}`,
+    `DMUX_PANE_ID=${sq(siblingPaneId)}`,
+    `DMUX_SLUG=${sq(slug)}`,
+    `DMUX_AGENT=${sq(agent)}`,
+    `DMUX_WORKTREE_PATH=${sq(targetPane.worktreePath)}`,
+    // Use the parent pane's branch/slug — siblings share the same git branch
+    `DMUX_BRANCH=${sq(targetPane.branchName || targetPane.slug)}`,
+  ].join(' ');
+  await tmuxService.sendShellCommand(paneInfo, envCmd);
+  await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
+
   // Launch the agent
   await launchAgentInPane({
     paneId: paneInfo,
@@ -157,7 +180,7 @@ export async function attachAgentToWorktree(
 
   // Build the sibling pane object — shares worktree/branch with target
   const newPane: DmuxPane = {
-    id: `dmux-${Date.now()}`,
+    id: siblingPaneId,
     slug,
     branchName: targetPane.branchName,
     prompt: prompt || 'No initial prompt',
@@ -168,6 +191,13 @@ export async function attachAgentToWorktree(
     agent,
     autopilot: settings.enableAutopilotByDefault ?? false,
   };
+
+  // Fire pane_created hook so sibling is visible to hook scripts (Gap 2).
+  // DMUX_IS_SIBLING=1 lets hook scripts distinguish this from a fresh pane
+  // with a newly created worktree and skip any worktree-init side effects.
+  triggerHook('pane_created', projectRoot, newPane, { DMUX_IS_SIBLING: '1' }).catch(() => {
+    // Ignore hook errors — don't block agent launch
+  });
 
   // Switch focus back to control pane
   await tmuxService.selectPane(originalPaneId);
