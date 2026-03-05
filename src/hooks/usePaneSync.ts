@@ -280,6 +280,64 @@ export async function handleLastPaneRemoval(projectRoot: string): Promise<void> 
   await handleLastPaneRemoved(projectRoot);
 }
 
+const SHELL_COMMANDS = new Set(['bash', 'zsh', 'sh', 'fish', 'dash', 'ksh', 'tcsh']);
+
+/**
+ * Re-injects DMUX env vars into live worktree panes after dmux restarts.
+ * Only sends to panes whose foreground process is a shell — skips panes where
+ * an agent is actively running to avoid injecting keystrokes into it.
+ */
+export async function reinjectEnvVarsForLivePanes(
+  panes: DmuxPane[],
+  allPaneIds: string[]
+): Promise<void> {
+  const tmuxService = TmuxService.getInstance();
+  const state = StateManager.getInstance().getState();
+  const serverPort = state.serverPort ?? 3142;
+  const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
+
+  const worktreePanes = panes.filter(
+    p => p.worktreePath && allPaneIds.includes(p.paneId)
+  );
+
+  for (const pane of worktreePanes) {
+    try {
+      const currentCommand = await tmuxService.getPaneCurrentCommand(pane.paneId);
+      if (!SHELL_COMMANDS.has(currentCommand)) {
+        LogService.getInstance().debug(
+          `Skipping env reinject for pane ${pane.slug} — foreground process is ${currentCommand}`,
+          'usePaneSync'
+        );
+        continue;
+      }
+
+      const projectRoot = pane.projectRoot ?? state.projectRoot ?? process.cwd();
+      const envCmd = [
+        'export',
+        `DMUX_ROOT=${sq(projectRoot)}`,
+        `DMUX_SERVER_PORT=${serverPort}`,
+        `DMUX_PANE_ID=${sq(pane.id)}`,
+        `DMUX_SLUG=${sq(pane.slug)}`,
+        `DMUX_WORKTREE_PATH=${sq(pane.worktreePath!)}`,
+        `DMUX_BRANCH=${sq(pane.slug)}`,
+      ].join(' ');
+
+      await tmuxService.sendShellCommand(pane.paneId, envCmd);
+      await tmuxService.sendTmuxKeys(pane.paneId, 'Enter');
+
+      LogService.getInstance().debug(
+        `Reinjected env vars into pane ${pane.slug} (${pane.paneId})`,
+        'usePaneSync'
+      );
+    } catch (error) {
+      LogService.getInstance().debug(
+        `Failed to reinject env vars for pane ${pane.slug}: ${error instanceof Error ? error.message : String(error)}`,
+        'usePaneSync'
+      );
+    }
+  }
+}
+
 /**
  * Destroys welcome pane when panes are added
  */

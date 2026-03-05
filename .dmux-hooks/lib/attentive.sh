@@ -34,6 +34,7 @@ extract_jira_key() {
 # Types: discovery | intent | blocked | done
 wal_write() {
   local type="$1" payload="$2"
+  command -v jq > /dev/null 2>&1 || { echo "[dmux] wal_write: jq not found, skipping" >&2; return 1; }
   curl -s -X POST "http://localhost:$DMUX_SERVER_PORT/api/wal" \
     -H "Content-Type: application/json" \
     -d "$(jq -n \

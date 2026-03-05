@@ -16,6 +16,7 @@ import {
   saveUpdatedPaneConfig,
   handleLastPaneRemoval,
   destroyWelcomePaneIfNeeded,
+  reinjectEnvVarsForLivePanes,
 } from './usePaneSync.js';
 import {
   detectAndAddShellPanes,
@@ -87,6 +88,9 @@ export default function usePanes(
           panesRef.current = loadedPanes;
           setPanes(loadedPanes);
           initialLoadComplete.current = true;
+          // Re-inject DMUX env vars into any live panes whose shell is at a prompt.
+          // Fire-and-forget — don't block the UI on this.
+          reinjectEnvVarsForLivePanes(loadedPanes, allPaneIds).catch(() => {});
           continue;
         }
 

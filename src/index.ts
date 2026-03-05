@@ -394,6 +394,7 @@ class Dmux {
       // If a welcome pane exists in tmux but config is stale/missing, adopt it.
       // If multiple welcome panes exist, keep one and remove extras.
       let welcomePaneIdsInSession: string[] = [];
+      let livePaneIdsInSession: Set<string> | null = null;
       try {
         const escapedSessionName = sessionNameForCurrentTmux.replace(/'/g, "'\\''");
         const paneInfoOutput = execSync(
@@ -402,14 +403,18 @@ class Dmux {
         ).trim();
 
         if (paneInfoOutput) {
-          const welcomePanesInSession = paneInfoOutput
+          const allPanesInSession = paneInfoOutput
             .split('\n')
             .map((line: string) => {
               const [paneId, paneTitle, panePath] = line.split('::');
               return { paneId, paneTitle, panePath };
             })
+            .filter(({ paneId }) => !!paneId);
+
+          livePaneIdsInSession = new Set(allPanesInSession.map(p => p.paneId));
+
+          const welcomePanesInSession = allPanesInSession
             .filter(({ paneId, paneTitle }) =>
-              !!paneId &&
               paneTitle === 'Welcome' &&
               paneId !== controlPaneId
             );
@@ -471,8 +476,13 @@ class Dmux {
         config.welcomePaneId
       );
 
-      // Only show welcome pane if there are no tracked AND no untracked panes
-      const hasAnyPanes = (config.panes?.length ?? 0) > 0 || untrackedPanes.length > 0;
+      // Only show welcome pane if there are no live tracked AND no untracked panes.
+      // Use live tmux pane IDs when available — stale config panes (from a killed session)
+      // should not prevent the welcome pane from appearing.
+      const hasLiveTrackedPanes = livePaneIdsInSession !== null
+        ? trackedPaneIds.some((id: string) => livePaneIdsInSession!.has(id))
+        : (config.panes?.length ?? 0) > 0; // fallback if tmux query failed
+      const hasAnyPanes = hasLiveTrackedPanes || untrackedPanes.length > 0;
 
       if (controlPaneId && !hasAnyPanes) {
         if (!hasValidWelcomePane) {

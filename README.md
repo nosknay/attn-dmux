@@ -45,6 +45,9 @@ dmux creates a tmux pane for each task. Every pane gets its own git worktree and
 - **Smart merging** &mdash; auto-commit, merge, and clean up in one step
 - **Multi-project** &mdash; add multiple repos to the same session
 - **Lifecycle hooks** &mdash; run scripts on worktree create, pre-merge, post-merge, and more
+- **WAL coordination** &mdash; agents share intent, discoveries, and blockers via a DuckDB-backed write-ahead log at `http://localhost:3142`
+
+> **WAL requires per-repo setup.** dmux ships `attentive.sh` in its own `.dmux-hooks/lib/` directory, but agents running in *your* repo's worktrees need `wal_write`/`wal_read` available there too. Copy the file and add a `worktree_created` hook that writes WAL instructions into each new worktree's agent files (`.claude/CLAUDE.md`, `AGENTS.md`, `GEMINI.md`). See `.dmux-hooks/worktree_created` in this repo for the reference implementation.
 
 ## Keyboard Shortcuts
 

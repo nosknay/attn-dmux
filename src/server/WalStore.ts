@@ -1,7 +1,8 @@
-import { DuckDBInstance, DuckDBConnection } from '@duckdb/node-api';
+import { DuckDBInstance } from '@duckdb/node-api';
 import path from 'path';
 import os from 'os';
-import { mkdirSync } from 'fs';
+import fs from 'fs';
+import PQueue from 'p-queue';
 
 export interface WalEntry {
   id?: number;
@@ -15,97 +16,147 @@ export interface WalEntry {
   payload: string;
 }
 
+const DATA_DIR = path.join(os.homedir(), '.dmux-workspaces');
+const DB_PATH  = path.join(DATA_DIR, 'attn-wal.db');
+
+/**
+ * WalStore — append-only NDJSON log for live sessions, DuckDB for history.
+ *
+ * Hot path (wal_write / wal_read):
+ *   - Entries are appended to a per-session NDJSON file and pushed to an
+ *     in-memory array. No DuckDB connection is held during normal operation,
+ *     so the DB file is never locked and can be queried externally at any time.
+ *
+ * Cold path (wal_history):
+ *   - Opens DuckDB transiently, imports any unarchived session log files,
+ *     runs the query, then closes the connection immediately.
+ */
 export class WalStore {
-  private conn!: DuckDBConnection;
-  private static readonly DB_PATH = path.join(
-    os.homedir(), '.dmux-workspaces', 'attn-wal.db'
-  );
+  private sessionId = '';
+  private sessionEntries: WalEntry[] = [];
+  private logFile = '';
+  private nextId = 1;
+  // Serializes transient DuckDB opens so concurrent wal_history calls
+  // don't race to acquire the DB file lock.
+  private historyQueue = new PQueue({ concurrency: 1 });
 
   async init(): Promise<void> {
-    mkdirSync(path.dirname(WalStore.DB_PATH), { recursive: true });
-    const instance = await DuckDBInstance.create(WalStore.DB_PATH);
-    this.conn = await instance.connect();
-
-    await this.conn.run(`CREATE SEQUENCE IF NOT EXISTS wal_entries_id_seq`);
-    await this.conn.run(`
-      CREATE TABLE IF NOT EXISTS sessions (
-        id          VARCHAR PRIMARY KEY,
-        project     VARCHAR,
-        started_at  TIMESTAMP DEFAULT now(),
-        ended_at    TIMESTAMP
-      )
-    `);
-    await this.conn.run(`
-      CREATE TABLE IF NOT EXISTS wal_entries (
-        id          BIGINT DEFAULT nextval('wal_entries_id_seq') PRIMARY KEY,
-        session_id  VARCHAR REFERENCES sessions(id),
-        ts          TIMESTAMP DEFAULT now(),
-        pane_id     VARCHAR,
-        slug        VARCHAR,
-        jira_key    VARCHAR,
-        agent       VARCHAR,
-        type        VARCHAR,
-        payload     VARCHAR
-      )
-    `);
-    await this.conn.run(`CREATE INDEX IF NOT EXISTS idx_wal_jira    ON wal_entries(jira_key)`);
-    await this.conn.run(`CREATE INDEX IF NOT EXISTS idx_wal_session ON wal_entries(session_id)`);
-    await this.conn.run(`CREATE INDEX IF NOT EXISTS idx_wal_type    ON wal_entries(type)`);
+    fs.mkdirSync(DATA_DIR, { recursive: true });
   }
 
-  async upsertSession(id: string, project: string): Promise<void> {
-    await this.conn.run(
-      `INSERT OR IGNORE INTO sessions(id, project) VALUES ($id, $project)`,
-      { id, project }
-    );
+  async upsertSession(id: string, _project: string): Promise<void> {
+    this.sessionId = id;
+    this.logFile = path.join(DATA_DIR, `session-${id}.ndjson`);
+
+    // Reload entries if reconnecting to an existing session.
+    if (fs.existsSync(this.logFile)) {
+      const lines = fs.readFileSync(this.logFile, 'utf-8')
+        .split('\n')
+        .filter(Boolean);
+      this.sessionEntries = lines.map(l => JSON.parse(l) as WalEntry);
+      this.nextId = this.sessionEntries.length + 1;
+    }
   }
 
   async append(entry: WalEntry): Promise<WalEntry> {
     const jiraKey = entry.slug.match(/^([a-z]+-\d+)/i)?.[1]?.toUpperCase() ?? null;
-    const reader = await this.conn.runAndReadAll(
-      `INSERT INTO wal_entries(session_id, pane_id, slug, jira_key, agent, type, payload)
-       VALUES ($session_id, $pane_id, $slug, $jira_key, $agent, $type, $payload)
-       RETURNING *`,
-      {
-        session_id: entry.session_id,
-        pane_id: entry.pane_id,
-        slug: entry.slug,
-        jira_key: jiraKey,
-        agent: entry.agent,
-        type: entry.type,
-        payload: entry.payload,
-      }
-    );
-    return reader.getRowObjectsJS()[0] as unknown as WalEntry;
+    const persisted: WalEntry = {
+      ...entry,
+      id: this.nextId++,
+      ts: new Date().toISOString(),
+      jira_key: jiraKey,
+    };
+
+    this.sessionEntries.push(persisted);
+    fs.appendFileSync(this.logFile, JSON.stringify(persisted) + '\n');
+
+    return persisted;
   }
 
-  async getSession(sessionId: string): Promise<WalEntry[]> {
-    const reader = await this.conn.runAndReadAll(
-      `SELECT * FROM wal_entries WHERE session_id = $session_id ORDER BY ts`,
-      { session_id: sessionId }
-    );
-    return reader.getRowObjectsJS() as unknown as WalEntry[];
+  async getSession(_sessionId: string): Promise<WalEntry[]> {
+    return this.sessionEntries;
   }
 
   async queryHistory(params: {
     jiraKey?: string; type?: string; agent?: string;
     since?: string; limit?: number;
   }): Promise<WalEntry[]> {
-    const conditions: string[] = [];
-    const values: Record<string, string | number> = {};
+    return this.historyQueue.add(() => this.runHistoryQuery(params)) as Promise<WalEntry[]>;
+  }
 
-    if (params.jiraKey) { conditions.push('jira_key = $jiraKey'); values['jiraKey'] = params.jiraKey; }
-    if (params.type)    { conditions.push('type = $type');         values['type'] = params.type; }
-    if (params.agent)   { conditions.push('agent = $agent');       values['agent'] = params.agent; }
-    if (params.since)   { conditions.push('ts >= $since');         values['since'] = params.since; }
+  private async runHistoryQuery(params: {
+    jiraKey?: string; type?: string; agent?: string;
+    since?: string; limit?: number;
+  }): Promise<WalEntry[]> {
+    // Open DuckDB transiently — import unarchived log files, query, close.
+    const instance = await DuckDBInstance.create(DB_PATH);
+    const conn = await instance.connect();
 
-    const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
-    values['limit'] = params.limit ?? 100;
+    try {
+      await conn.run(`
+        CREATE TABLE IF NOT EXISTS wal_entries (
+          id         BIGINT,
+          session_id VARCHAR,
+          ts         TIMESTAMP,
+          pane_id    VARCHAR,
+          slug       VARCHAR,
+          jira_key   VARCHAR,
+          agent      VARCHAR,
+          type       VARCHAR,
+          payload    VARCHAR
+        )
+      `);
+      await conn.run(`
+        CREATE TABLE IF NOT EXISTS imported_sessions (
+          session_id VARCHAR PRIMARY KEY
+        )
+      `);
 
-    const reader = await this.conn.runAndReadAll(
-      `SELECT * FROM wal_entries ${where} ORDER BY ts DESC LIMIT $limit`,
-      values
-    );
-    return reader.getRowObjectsJS() as unknown as WalEntry[];
+      // Import any session log files not yet in DuckDB.
+      const logFiles = fs.readdirSync(DATA_DIR)
+        .filter(f => f.startsWith('session-') && f.endsWith('.ndjson'));
+
+      for (const file of logFiles) {
+        const sid = file.replace('session-', '').replace('.ndjson', '');
+        const alreadyImported = await conn.runAndReadAll(
+          `SELECT 1 FROM imported_sessions WHERE session_id = $sid`,
+          { sid }
+        );
+        if (alreadyImported.getRowObjectsJS().length > 0) continue;
+
+        const filePath = path.join(DATA_DIR, file);
+        await conn.run(
+          `INSERT INTO wal_entries SELECT * FROM read_ndjson($path, columns={
+            id:'BIGINT', session_id:'VARCHAR', ts:'TIMESTAMP',
+            pane_id:'VARCHAR', slug:'VARCHAR', jira_key:'VARCHAR',
+            agent:'VARCHAR', type:'VARCHAR', payload:'VARCHAR'
+          })`,
+          { path: filePath }
+        );
+        await conn.run(
+          `INSERT OR IGNORE INTO imported_sessions VALUES ($sid)`,
+          { sid }
+        );
+      }
+
+      const conditions: string[] = [];
+      const values: Record<string, string | number> = {};
+
+      if (params.jiraKey) { conditions.push(`jira_key = $jiraKey`); values['jiraKey'] = params.jiraKey; }
+      if (params.type)    { conditions.push(`type = $type`);         values['type']    = params.type; }
+      if (params.agent)   { conditions.push(`agent = $agent`);       values['agent']   = params.agent; }
+      if (params.since)   { conditions.push(`ts >= $since`);         values['since']   = params.since; }
+
+      const where = conditions.length ? `WHERE ${conditions.join(' AND ')}` : '';
+      values['limit'] = params.limit ?? 100;
+
+      const reader = await conn.runAndReadAll(
+        `SELECT * FROM wal_entries ${where} ORDER BY ts DESC LIMIT $limit`,
+        values
+      );
+      return reader.getRowObjectsJS() as unknown as WalEntry[];
+    } finally {
+      conn.closeSync();
+    }
   }
 }
