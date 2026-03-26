@@ -369,7 +369,7 @@ describe('Pane Lifecycle Integration Tests', () => {
 
       // Should fallback to timestamp-based slug
       if ('pane' in result) {
-        expect(result.pane.slug).toMatch(/dmux-\d+/);
+        expect(result.pane.slug).toMatch(/attn-\d+/);
       }
     });
 

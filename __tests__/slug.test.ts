@@ -4,7 +4,7 @@ import { generateSlug } from '../src/utils/slug.js';
 describe('slug generation', () => {
   it('falls back to timestamp when no providers available', async () => {
     const slug = await generateSlug('');
-    expect(slug.startsWith('dmux-')).toBe(true);
+    expect(slug.startsWith('attn-')).toBe(true);
   });
 
   it('returns kebab-ish slug for prompt (or fallback)', async () => {
