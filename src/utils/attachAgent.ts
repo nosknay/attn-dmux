@@ -155,6 +155,11 @@ export async function attachAgentToWorktree(
   await tmuxService.sendShellCommand(paneInfo, envCmd);
   await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
 
+  // Source bus helpers if available
+  const attentiveSh = `${projectRoot}/.dmux-hooks/lib/attentive.sh`;
+  await tmuxService.sendShellCommand(paneInfo, `[ -f ${sq(attentiveSh)} ] && source ${sq(attentiveSh)}`);
+  await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
+
   // Launch the agent
   await launchAgentInPane({
     paneId: paneInfo,

@@ -505,6 +505,11 @@ export async function createPane(
   await tmuxService.sendShellCommand(paneInfo, envCmd);
   await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
 
+  // Source bus helpers if available
+  const attentiveSh = `${projectRoot}/.dmux-hooks/lib/attentive.sh`;
+  await tmuxService.sendShellCommand(paneInfo, `[ -f ${sq(attentiveSh)} ] && source ${sq(attentiveSh)}`);
+  await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
+
   // Launch agent if specified
   const hasInitialPrompt = !!(prompt && prompt.trim());
 
