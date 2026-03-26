@@ -115,6 +115,38 @@ curl -X PUT "http://localhost:$DMUX_SERVER_PORT/api/panes/$DMUX_PANE_ID/dev" \\
 # url: Can be localhost or tunnel URL (ngrok, cloudflared, etc.)
 \`\`\`
 
+## Message Bus
+
+Agents can publish messages to a shared bus and request dmux to spawn new agent panes.
+Bus helpers are available after sourcing \`.dmux-hooks/lib/attentive.sh\`.
+
+\`\`\`bash
+source "$DMUX_ROOT/.dmux-hooks/lib/attentive.sh"
+
+# Publish a message
+# Types: intent | discovery | blocked | done | needs-agent:sibling | needs-agent:worktree
+bus_publish "intent"               "about to modify AccountService.java"
+bus_publish "discovery"            "param store key /prod/db-url appears unused"
+bus_publish "blocked"              "waiting on JNY-5678 to merge before I can proceed"
+bus_publish "done"                 "PR opened: $DMUX_SLUG"
+
+# Request a new agent pane (dmux spawns it and writes back a 'spawned' message)
+# task hints: code-generation | test-writing | research | review | planning | debugging
+# capability tiers (fallback): fast | smart
+bus_publish "needs-agent:sibling"  "write unit tests for AccountService.java"  "test-writing"
+bus_publish "needs-agent:worktree" "JNY-5678: extract PaymentGateway"          "code-generation"
+bus_publish "needs-agent:sibling"  "investigate why the subscription pipeline is slow"  "smart"
+
+# Read messages (incremental recommended to keep context bounded)
+bus_read                          # all messages this session
+bus_read "since=42"               # only messages after id 42
+bus_read "type=spawned&since=42"  # check if a spawn was acted on
+\`\`\`
+
+Call \`bus_read\` once near the start of a task for situational awareness, then
+use \`since=<last_id>\` for incremental updates. Publish \`intent\` before touching
+shared files and \`done\` when finishing.
+
 ## Common Patterns
 
 ### Pattern 1: Install Dependencies

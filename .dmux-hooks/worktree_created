@@ -17,4 +17,46 @@ for f in .env.local .env.development; do
   [ -f "$DMUX_ROOT/$f" ] && cp "$DMUX_ROOT/$f" "$DMUX_WORKTREE_PATH/$f"
 done
 
+# Append bus usage instructions to agent context files
+BUS_INSTRUCTIONS="
+## dmux message bus
+
+This worktree runs inside dmux. Agents can publish messages to the shared bus and
+request dmux to spawn new agent panes on their behalf.
+
+\`\`\`bash
+# Source helpers (available in each worktree)
+source \"\$DMUX_ROOT/.dmux-hooks/lib/attentive.sh\"
+
+# Publish a message
+bus_publish \"intent\"               \"about to modify AccountService.java\"
+bus_publish \"discovery\"            \"param store key /prod/db-url appears unused\"
+bus_publish \"blocked\"              \"waiting on JNY-5678 to merge before I can proceed\"
+bus_publish \"done\"                 \"PR opened: \$DMUX_SLUG\"
+
+# Request a new agent pane (dmux spawns it and writes back a 'spawned' message)
+# Supported task hints: code-generation | test-writing | research | review | planning | debugging
+# Capability tiers (fallback): fast | smart
+bus_publish \"needs-agent:sibling\"  \"write unit tests for AccountService.java\"  \"test-writing\"
+bus_publish \"needs-agent:worktree\" \"JNY-5678: extract PaymentGateway\"          \"code-generation\"
+bus_publish \"needs-agent:sibling\"  \"investigate why the subscription pipeline is slow\"  \"smart\"
+
+# Read messages (incremental recommended to keep context bounded)
+bus_read                          # all messages this session
+bus_read \"since=42\"              # only messages after id 42
+bus_read \"type=spawned&since=42\" # check if a spawn was acted on
+\`\`\`
+
+Call \`bus_read\` once near the start of a task for situational awareness, then
+use \`since=<last_id>\` for incremental updates. Publish \`intent\` before touching
+shared files and \`done\` when finishing.
+"
+
+for agent_file in ".claude/CLAUDE.md" "AGENTS.md" "GEMINI.md"; do
+  target="$DMUX_WORKTREE_PATH/$agent_file"
+  if [ -f "$target" ]; then
+    echo "$BUS_INSTRUCTIONS" >> "$target"
+  fi
+done
+
 echo "[Hook] Worktree ready: $DMUX_SLUG ($REPO_TYPE)"
