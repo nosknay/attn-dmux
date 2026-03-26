@@ -140,9 +140,11 @@ export async function attachAgentToWorktree(
   await new Promise(r => setTimeout(r, 300));
 
   const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
+  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
   const envCmd = [
     'export',
     `DMUX_ROOT=${sq(projectRoot)}`,
+    `DMUX_SERVER_PORT=${serverPort}`,
     `DMUX_PANE_ID=${sq(siblingPaneId)}`,
     `DMUX_SLUG=${sq(slug)}`,
     `DMUX_AGENT=${sq(agent)}`,

@@ -140,6 +140,20 @@ export class StateManager extends EventEmitter {
     this.notifyListeners();
   }
 
+  updatePaneTestStatus(paneId: string, status: Partial<Pick<DmuxPane, 'testStatus' | 'testOutput'>>): void {
+    const idx = this.state.panes.findIndex(p => p.id === paneId);
+    if (idx === -1) return;
+    this.state.panes[idx] = { ...this.state.panes[idx], ...status };
+    this.notifyListeners();
+  }
+
+  updatePaneDevStatus(paneId: string, status: Partial<Pick<DmuxPane, 'devStatus' | 'devUrl'>>): void {
+    const idx = this.state.panes.findIndex(p => p.id === paneId);
+    if (idx === -1) return;
+    this.state.panes[idx] = { ...this.state.panes[idx], ...status };
+    this.notifyListeners();
+  }
+
   getPaneById(id: string): DmuxPane | undefined {
     return this.state.panes.find(pane => pane.id === id);
   }

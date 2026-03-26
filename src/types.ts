@@ -117,6 +117,10 @@ export interface DmuxSettings {
   minPaneWidth?: number;
   // Preferred maximum content pane width in characters
   maxPaneWidth?: number;
+  // Maps task hints and capability tiers to agent names for bus-driven spawning.
+  // Task categories: code-generation | test-writing | research | review | planning | debugging
+  // Capability tiers: fast | smart (fallback when no task category matches)
+  taskAgentMap?: Partial<Record<string, AgentName>>;
 }
 
 export type SettingsScope = 'global' | 'project';

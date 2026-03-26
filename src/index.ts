@@ -16,6 +16,8 @@ import FileBrowserApp from './FileBrowserApp.js';
 import { AutoUpdater } from './services/AutoUpdater.js';
 import { StateManager } from './shared/StateManager.js';
 import { LogService } from './services/LogService.js';
+import { startDmuxServer } from './server/index.js';
+import { findAvailablePort } from './utils/port.js';
 import { TmuxService } from './services/TmuxService.js';
 import { createWelcomePane, destroyWelcomePane } from './utils/welcomePane.js';
 import { TMUX_COLORS } from './theme/colors.js';
@@ -621,6 +623,12 @@ class Dmux {
 
     // Update state manager with project info
     this.stateManager.updateProjectInfo(this.projectName, this.sessionName, this.projectRoot, this.panesFile);
+
+    // Start the dmux HTTP server (bus + pane callbacks)
+    const serverPort = await findAvailablePort([3142]);
+    startDmuxServer(this.stateManager, serverPort).catch(err => {
+      console.error('[dmux] Failed to start server:', err);
+    });
 
     // Logging system is ready (removed debug logs to reduce clutter)
 

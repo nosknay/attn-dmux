@@ -72,6 +72,16 @@ const DEFAULT_SETTINGS: DmuxSettings = {
   enabledAgents: getDefaultEnabledAgents(),
   enabledNotificationSounds: getDefaultNotificationSoundSelection(),
   showFooterTips: true,
+  taskAgentMap: {
+    'code-generation': 'claude',
+    'test-writing':    'claude',
+    'research':        'claude',
+    'review':          'claude',
+    'planning':        'claude',
+    'debugging':       'claude',
+    'fast':            'claude',
+    'smart':           'claude',
+  },
 };
 
 const AGENT_OPTIONS = getAgentDefinitions().map((agent) => ({

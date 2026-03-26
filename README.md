@@ -48,6 +48,7 @@ dmux creates a tmux pane for each task. Every pane gets its own git worktree and
 - **Pane visibility controls** &mdash; hide individual panes, isolate one project, or restore everything later without stopping work
 - **Multi-project** &mdash; add multiple repos to the same session
 - **Lifecycle hooks** &mdash; run scripts on worktree create, pre-merge, post-merge, and more
+- **Message bus** &mdash; agents communicate and spawn new panes via a shared SQLite-backed bus
 
 ## Keyboard Shortcuts
 
@@ -73,6 +74,30 @@ dmux creates a tmux pane for each task. Every pane gets its own git worktree and
 - Git 2.20+
 - At least one supported agent CLI (for example [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex](https://github.com/openai/codex), [OpenCode](https://github.com/opencode-ai/opencode), [Cline CLI](https://docs.cline.bot/cline-cli/getting-started), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Qwen CLI](https://github.com/QwenLM/qwen-code), [Amp CLI](https://ampcode.com/manual), [pi CLI](https://www.npmjs.com/package/@mariozechner/pi-coding-agent), [Cursor CLI](https://docs.cursor.com/en/cli/overview), [Copilot CLI](https://github.com/github/copilot-cli), [Crush CLI](https://github.com/charmbracelet/crush))
 - [OpenRouter API key](https://openrouter.ai/) (optional, for AI branch names and commit messages)
+
+## Message Bus
+
+dmux runs a lightweight HTTP server that agents can use to coordinate across panes. Each worktree gets shell helpers sourced automatically via the `worktree_created` hook.
+
+```bash
+source "$DMUX_ROOT/.dmux-hooks/lib/attentive.sh"
+
+# Publish messages to the shared bus
+bus_publish "intent"    "about to modify AccountService.java"
+bus_publish "discovery" "found an unused config key in param store"
+bus_publish "done"      "PR opened: $DMUX_SLUG"
+
+# Request dmux to spawn a new agent pane
+# task hints: code-generation | test-writing | research | review | planning | debugging
+bus_publish "needs-agent:sibling"  "write unit tests for AccountService.java" "test-writing"
+bus_publish "needs-agent:worktree" "extract PaymentGateway into its own service" "code-generation"
+
+# Read messages from other agents
+bus_read                  # all messages this session
+bus_read "since=42"       # incremental — only messages after id 42
+```
+
+When an agent publishes a `needs-agent` message, dmux resolves the best available agent (using `taskAgentMap` in `~/.dmux.global.json`) and spawns a new pane automatically. The resolved agent and new pane slug are written back to the bus as a `spawned` message.
 
 ## Documentation
 
