@@ -3,6 +3,8 @@ import { Box, Text } from 'ink';
 import stringWidth from 'string-width';
 import type { DmuxPane } from '../../types.js';
 import { COLORS } from '../../theme/colors.js';
+import { getAgentShortLabel } from '../../utils/agentLaunch.js';
+import { getPaneDisplayName } from '../../utils/paneTitle.js';
 
 interface PaneCardProps {
   pane: DmuxPane;
@@ -48,12 +50,14 @@ const PaneCard: React.FC<PaneCardProps> = memo(({ pane, isDevSource, selected, i
   };
 
   const status = getStatusIcon();
+  const isFileBrowserPane = pane.type === 'shell' && pane.shellType === 'fb';
+  const paneName = getPaneDisplayName(pane);
 
   // Right-aligned columns: [cc] = 4 chars, (ap) = 4 chars, space between = 1
   const hasAgent = pane.type === 'shell' || !!pane.agent;
   const agentTag = pane.type === 'shell'
     ? (pane.shellType || 'sh').substring(0, 2)
-    : pane.agent === 'claude' ? 'cc' : pane.agent ? 'oc' : null;
+    : pane.agent ? getAgentShortLabel(pane.agent) : null;
   const apTag = pane.autopilot ? 'ap' : null;
 
   // Keep non-title segments fixed; only slug is allowed to clip.
@@ -61,28 +65,48 @@ const PaneCard: React.FC<PaneCardProps> = memo(({ pane, isDevSource, selected, i
     ? (selected ? '└▸' : '└ ')
     : (selected ? '▸ ' : '  ');
   const statusText = `${status.icon} `;
+  const attentionText = pane.needsAttention ? '! ' : '';
   const sourceText = isDevSource ? '★ ' : '';
+  const hiddenText = pane.hidden ? ' (hidden)' : '';
   const agentText = hasAgent ? ` [${agentTag}]` : '     ';
   const autopilotText = apTag ? ` (${apTag})` : '     ';
-  const fixedLeftWidth = stringWidth(prefix + statusText + sourceText);
+  const shellPrefixText = isFileBrowserPane ? ' ' : '';
+  const fixedLeftWidth = stringWidth(prefix + statusText + attentionText + sourceText + shellPrefixText + hiddenText);
   const maxSlugWidth = Math.max(0, LEFT_COLUMN_WIDTH - fixedLeftWidth);
-  const slugText = clipToWidth(pane.slug, maxSlugWidth);
+  const slugText = clipToWidth(paneName, maxSlugWidth);
+  const slugColor = isFileBrowserPane
+    ? 'cyan'
+    : selected
+      ? COLORS.selected
+      : COLORS.unselected;
+  const shellTagColor = isFileBrowserPane ? 'yellow' : pane.type === 'shell' ? 'cyan' : 'gray';
 
   return (
     <Box width={ROW_WIDTH}>
       <Box width={LEFT_COLUMN_WIDTH}>
         <Text color={selected ? COLORS.selected : COLORS.border}>{prefix}</Text>
         <Text color={status.color}>{statusText}</Text>
+        {pane.needsAttention && (
+          <Text color={COLORS.warning}>{attentionText}</Text>
+        )}
         {isDevSource && (
           <Text color="yellow">{sourceText}</Text>
         )}
-        <Text color={selected ? COLORS.selected : COLORS.unselected} bold={selected}>
+        {isFileBrowserPane && (
+          <Text color="cyan">{shellPrefixText}</Text>
+        )}
+        <Text color={slugColor} bold={selected || isFileBrowserPane}>
           {slugText}
         </Text>
+        {pane.hidden && (
+          <Text color="yellow" dimColor>
+            {hiddenText}
+          </Text>
+        )}
       </Box>
       <Box width={RIGHT_COLUMN_WIDTH} justifyContent="flex-end">
         {agentTag
-          ? <Text color={pane.type === 'shell' ? 'cyan' : 'gray'}>{agentText}</Text>
+          ? <Text color={shellTagColor}>{agentText}</Text>
           : <Text>{agentText}</Text>
         }
         {apTag
@@ -96,10 +120,13 @@ const PaneCard: React.FC<PaneCardProps> = memo(({ pane, isDevSource, selected, i
   return (
     prevProps.pane.id === nextProps.pane.id &&
     prevProps.pane.slug === nextProps.pane.slug &&
+    prevProps.pane.displayName === nextProps.pane.displayName &&
     prevProps.pane.agentStatus === nextProps.pane.agentStatus &&
+    prevProps.pane.needsAttention === nextProps.pane.needsAttention &&
     prevProps.pane.testStatus === nextProps.pane.testStatus &&
     prevProps.pane.devStatus === nextProps.pane.devStatus &&
     prevProps.pane.autopilot === nextProps.pane.autopilot &&
+    prevProps.pane.hidden === nextProps.pane.hidden &&
     prevProps.pane.type === nextProps.pane.type &&
     prevProps.pane.shellType === nextProps.pane.shellType &&
     prevProps.pane.agent === nextProps.pane.agent &&

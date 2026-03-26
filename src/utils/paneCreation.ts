@@ -2,9 +2,10 @@ import path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
 import { randomUUID } from 'crypto';
-import type { DmuxPane, DmuxConfig } from '../types.js';
+import type { DmuxPane, DmuxConfig, MergeTargetReference } from '../types.js';
 import { TmuxService } from '../services/TmuxService.js';
 import {
+  ensurePaneBorderStatusForCurrentSession,
   setupSidebarLayout,
   getTerminalDimensions,
   splitPane,
@@ -37,12 +38,20 @@ import {
 import { ensureGeminiFolderTrusted } from './geminiTrust.js';
 import { isValidBranchName } from './git.js';
 import { sendPromptViaTmux } from './agentPromptDispatch.js';
+import { readWorktreeMetadata, writeWorktreeMetadata } from './worktreeMetadata.js';
 
 export interface CreatePaneOptions {
   prompt: string;
   agent?: AgentName;
   slugSuffix?: string;
   slugBase?: string;
+  existingWorktree?: {
+    slug: string;
+    worktreePath: string;
+    branchName: string;
+  };
+  startPointBranch?: string;
+  mergeTargetChain?: MergeTargetReference[];
   projectName: string;
   existingPanes: DmuxPane[];
   projectRoot?: string; // Target repository root for the new pane
@@ -84,6 +93,9 @@ export async function createPane(
     existingPanes,
     slugSuffix,
     slugBase,
+    existingWorktree,
+    startPointBranch,
+    mergeTargetChain,
     skipAgentSelection = false,
     sessionConfigPath: optionsSessionConfigPath,
     sessionProjectRoot: optionsSessionProjectRoot,
@@ -125,6 +137,9 @@ export async function createPane(
 
   const settingsManager = new SettingsManager(projectRoot);
   const settings = settingsManager.getSettings();
+  const existingWorktreeMetadata = existingWorktree
+    ? readWorktreeMetadata(existingWorktree.worktreePath)
+    : null;
 
   const sessionProjectRoot = optionsSessionProjectRoot
     || (optionsSessionConfigPath ? path.dirname(path.dirname(optionsSessionConfigPath)) : projectRoot);
@@ -164,14 +179,21 @@ export async function createPane(
     throw new Error(`Invalid branch prefix: ${branchPrefix}`);
   }
 
-  // Generate slug (filesystem-safe directory name) and branch name (may include prefix)
-  const generatedSlug = slugBase || await generateSlug(prompt);
-  const slug = appendSlugSuffix(generatedSlug, slugSuffix);
-  const branchName = branchPrefix ? `${branchPrefix}${slug}` : slug;
+  // Generate slug (filesystem-safe directory name) and branch name (may include prefix).
+  const generatedSlug = existingWorktree
+    ? existingWorktree.slug
+    : (slugBase || await generateSlug(prompt));
+  const slug = existingWorktree
+    ? existingWorktree.slug
+    : appendSlugSuffix(generatedSlug, slugSuffix);
+  const branchName = existingWorktree
+    ? existingWorktree.branchName
+    : (branchPrefix ? `${branchPrefix}${slug}` : slug);
   const paneId = `dmux-${randomUUID()}`;
   const tmuxService = TmuxService.getInstance();
 
-  const worktreePath = path.join(projectRoot, '.dmux', 'worktrees', slug);
+  const worktreePath = existingWorktree?.worktreePath
+    || path.join(projectRoot, '.dmux', 'worktrees', slug);
   const originalPaneId = tmuxService.getCurrentPaneIdSync();
 
   // Load config to get control pane info
@@ -218,7 +240,7 @@ export async function createPane(
 
   // Enable pane borders to show titles
   try {
-    tmuxService.setGlobalOptionSync('pane-border-status', 'top');
+    ensurePaneBorderStatusForCurrentSession();
   } catch {
     // Ignore if already set or fails
   }
@@ -331,85 +353,120 @@ export async function createPane(
 
   // Create git worktree and cd into it
   try {
-    // IMPORTANT: Prune stale worktrees first to avoid conflicts
-    // This must run synchronously from dmux, not in the pane
-    try {
-      execSync('git worktree prune', {
-        encoding: 'utf-8',
-        stdio: 'pipe',
-        cwd: projectRoot,
-      });
-    } catch {
-      // Ignore prune errors, proceed anyway
-    }
-
-    // Validate and resolve base branch for new worktrees
-    const baseBranch = settings.baseBranch || '';
-    if (baseBranch && !isValidBranchName(baseBranch)) {
-      throw new Error(`Invalid base branch name: ${baseBranch}`);
-    }
-    if (baseBranch) {
-      try {
-        execSync(`git rev-parse --verify "refs/heads/${baseBranch}"`, {
-          stdio: 'pipe',
-          cwd: projectRoot,
-        });
-      } catch {
-        throw new Error(
-          `Base branch "${baseBranch}" does not exist. Update the baseBranch setting to a valid branch name.`
-        );
-      }
-    }
-
-    const maxWorktreeAttempts = 3;
-    const maxWaitTime = 5000; // 5 seconds max
-    const checkInterval = 100; // Check every 100ms
-    let worktreeCreated = fs.existsSync(worktreePath);
-
-    for (let attempt = 1; attempt <= maxWorktreeAttempts && !worktreeCreated; attempt++) {
-      // Check if branch already exists (from a deleted worktree or a previous attempt)
-      let branchExists = false;
-      try {
-        execSync(`git show-ref --verify --quiet "refs/heads/${branchName}"`, {
-          stdio: 'pipe',
-          cwd: projectRoot,
-        });
-        branchExists = true;
-      } catch {
-        // Branch doesn't exist yet
+    if (existingWorktree) {
+      if (!fs.existsSync(path.join(worktreePath, '.git'))) {
+        throw new Error(`Existing worktree not found at ${worktreePath}`);
       }
 
-      // Build worktree command:
-      // - If branch exists, use it (don't create with -b)
-      // - If branch doesn't exist, create it with -b, optionally from a configured base branch
-      const startPoint = baseBranch ? ` "${baseBranch}"` : '';
-      const worktreeAddCmd = branchExists
-        ? `git worktree add "${worktreePath}" "${branchName}"`
-        : `git worktree add "${worktreePath}" -b "${branchName}"${startPoint}`;
-      const worktreeCmd = `cd "${projectRoot}" && ${worktreeAddCmd} && cd "${worktreePath}"`;
-
-      // Send the git worktree command (auto-quoted by sendShellCommand)
-      await tmuxService.sendShellCommand(paneInfo, worktreeCmd);
+      await tmuxService.sendShellCommand(paneInfo, `cd "${worktreePath}"`);
       await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
-
-      const startTime = Date.now();
-      while (!fs.existsSync(worktreePath) && (Date.now() - startTime) < maxWaitTime) {
-        await new Promise((resolve) => setTimeout(resolve, checkInterval));
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    } else {
+      // IMPORTANT: Prune stale worktrees first to avoid conflicts
+      // This must run synchronously from dmux, not in the pane
+      try {
+        execSync('git worktree prune', {
+          encoding: 'utf-8',
+          stdio: 'pipe',
+          cwd: projectRoot,
+        });
+      } catch {
+        // Ignore prune errors, proceed anyway
       }
 
-      worktreeCreated = fs.existsSync(worktreePath);
-      if (!worktreeCreated && attempt < maxWorktreeAttempts) {
-        await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+      // Validate and resolve base branch for new worktrees
+      const baseBranch = settings.baseBranch || '';
+      if (baseBranch && !isValidBranchName(baseBranch)) {
+        throw new Error(`Invalid base branch name: ${baseBranch}`);
       }
+      const resolvedStartPoint = startPointBranch || baseBranch;
+      if (resolvedStartPoint && !isValidBranchName(resolvedStartPoint)) {
+        throw new Error(`Invalid worktree start-point branch name: ${resolvedStartPoint}`);
+      }
+      if (resolvedStartPoint) {
+        try {
+          execSync(`git rev-parse --verify "refs/heads/${resolvedStartPoint}"`, {
+            stdio: 'pipe',
+            cwd: projectRoot,
+          });
+        } catch {
+          if (startPointBranch) {
+            throw new Error(
+              `Worktree start-point branch "${resolvedStartPoint}" does not exist anymore. Reopen the parent worktree or recreate it before branching again.`
+            );
+          }
+
+          throw new Error(
+            `Base branch "${resolvedStartPoint}" does not exist. Update the baseBranch setting to a valid branch name.`
+          );
+        }
+      }
+
+      const maxWorktreeAttempts = 3;
+      const maxWaitTime = 5000; // 5 seconds max
+      const checkInterval = 100; // Check every 100ms
+      let worktreeCreated = fs.existsSync(worktreePath);
+
+      for (let attempt = 1; attempt <= maxWorktreeAttempts && !worktreeCreated; attempt++) {
+        // Check if branch already exists (from a deleted worktree or a previous attempt)
+        let branchExists = false;
+        try {
+          execSync(`git show-ref --verify --quiet "refs/heads/${branchName}"`, {
+            stdio: 'pipe',
+            cwd: projectRoot,
+          });
+          branchExists = true;
+        } catch {
+          // Branch doesn't exist yet
+        }
+
+        // Build worktree command:
+        // - If branch exists, use it (don't create with -b)
+        // - If branch doesn't exist, create it with -b, optionally from a configured base branch
+        const startPoint = resolvedStartPoint ? ` "${resolvedStartPoint}"` : '';
+        const worktreeAddCmd = branchExists
+          ? `git worktree add "${worktreePath}" "${branchName}"`
+          : `git worktree add "${worktreePath}" -b "${branchName}"${startPoint}`;
+        const worktreeCmd = `cd "${projectRoot}" && ${worktreeAddCmd} && cd "${worktreePath}"`;
+
+        // Send the git worktree command (auto-quoted by sendShellCommand)
+        await tmuxService.sendShellCommand(paneInfo, worktreeCmd);
+        await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
+
+        const startTime = Date.now();
+        while (!fs.existsSync(worktreePath) && (Date.now() - startTime) < maxWaitTime) {
+          await new Promise((resolve) => setTimeout(resolve, checkInterval));
+        }
+
+        worktreeCreated = fs.existsSync(worktreePath);
+        if (!worktreeCreated && attempt < maxWorktreeAttempts) {
+          await new Promise((resolve) => setTimeout(resolve, 250 * attempt));
+        }
+      }
+
+      // Verify worktree was created successfully
+      if (!worktreeCreated) {
+        throw new Error(`Worktree directory not created at ${worktreePath} after ${maxWorktreeAttempts} attempts`);
+      }
+
+      // Give a bit more time for git to finish setting up the worktree
+      await new Promise((resolve) => setTimeout(resolve, 500));
     }
 
-    // Verify worktree was created successfully
-    if (!worktreeCreated) {
-      throw new Error(`Worktree directory not created at ${worktreePath} after ${maxWorktreeAttempts} attempts`);
+    try {
+      writeWorktreeMetadata(worktreePath, {
+        agent,
+        permissionMode: settings.permissionMode,
+        displayName: existingWorktreeMetadata?.displayName,
+        branchName: branchName !== slug ? branchName : undefined,
+        mergeTargetChain,
+      });
+    } catch (metadataError) {
+      LogService.getInstance().warn(
+        `Failed to persist worktree metadata for ${slug}: ${metadataError}`,
+        'paneCreation'
+      );
     }
-
-    // Give a bit more time for git to finish setting up the worktree
-    await new Promise((resolve) => setTimeout(resolve, 500));
 
     // Initialize .dmux-hooks if this is a hooks editing session
     if (isHooksEditingSession) {
@@ -532,6 +589,7 @@ export async function createPane(
   const newPane: DmuxPane = {
     id: paneId,
     slug,
+    displayName: existingWorktreeMetadata?.displayName,
     branchName: branchName !== slug ? branchName : undefined, // Only store if different from slug
     prompt: prompt || 'No initial prompt',
     paneId: paneInfo,
@@ -539,8 +597,10 @@ export async function createPane(
     projectName: paneProjectName,
     worktreePath,
     agent,
+    permissionMode: settings.permissionMode,
     // Set autopilot based on settings (use ?? to properly handle false vs undefined)
     autopilot: settings.enableAutopilotByDefault ?? false,
+    mergeTargetChain,
   };
 
   // CRITICAL: Save the pane to config IMMEDIATELY before destroying welcome pane.

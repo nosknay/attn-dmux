@@ -308,7 +308,7 @@ const DmuxApp = ({ panesFile, projectName, sessionName, settingsFile, projectRoo
     // loadPanes moved to usePanes
     // getPanePositions moved to utils/tmux
     const sessionProjectRoot = projectRoot || process.cwd();
-    const projectActionLayout = useMemo(() => buildProjectActionLayout(panes, sessionProjectRoot, projectName), [panes, sessionProjectRoot, projectName]);
+    const projectActionLayout = useMemo(() => buildProjectActionLayout(panes, [], sessionProjectRoot, projectName), [panes, sessionProjectRoot, projectName]);
     const navigationRows = useMemo(() => isLoading
         ? projectActionLayout.groups.flatMap((group) => group.panes.map((entry) => [entry.index]))
         : buildVisualNavigationRows(projectActionLayout), [isLoading, projectActionLayout]);
@@ -893,7 +893,7 @@ class Dmux {
                     \`set-option -t \${this.sessionName} pane-border-status top\`,
                     \`set-option -t \${this.sessionName} pane-active-border-style "fg=colour\${TMUX_COLORS.activeBorder}"\`,
                     \`set-option -t \${this.sessionName} pane-border-style "fg=colour\${TMUX_COLORS.inactiveBorder}"\`,
-                    \`set-option -t \${this.sessionName} pane-border-format " #{pane_title} "\`,
+                    \`set-option -t \${this.sessionName} pane-border-format " #{s|__dmux__.*$||:pane_title} "\`,
                     \`select-pane -t \${this.sessionName} -T "dmux v\${packageJson.version} - \${this.projectName}"\`,
                 ].join(' \\\\; ');
                 execSync(\`tmux \${sessionOptions}\`, { stdio: 'inherit' });
