@@ -148,13 +148,10 @@ export async function reopenWorktree(
   // Wait for CD to complete
   await new Promise((resolve) => setTimeout(resolve, 300));
 
-  // Inject DMUX env vars into the pane shell so WAL helpers work
   const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
-  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
   const envCmd = [
     'export',
     `DMUX_ROOT=${sq(projectRoot)}`,
-    `DMUX_SERVER_PORT=${serverPort}`,
     `DMUX_PANE_ID=${sq(paneId)}`,
     `DMUX_SLUG=${sq(slug)}`,
     `DMUX_WORKTREE_PATH=${sq(worktreePath)}`,

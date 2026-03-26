@@ -139,15 +139,10 @@ export async function attachAgentToWorktree(
   // Small delay for cd to complete
   await new Promise(r => setTimeout(r, 300));
 
-  // Inject DMUX env vars so WAL helpers work in this pane's shell (Gap 1).
-  // Values are single-quoted and internal single quotes escaped to handle any
-  // special characters ($, ", `, etc.) that may appear in file system paths.
   const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
-  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
   const envCmd = [
     'export',
     `DMUX_ROOT=${sq(projectRoot)}`,
-    `DMUX_SERVER_PORT=${serverPort}`,
     `DMUX_PANE_ID=${sq(siblingPaneId)}`,
     `DMUX_SLUG=${sq(slug)}`,
     `DMUX_AGENT=${sq(agent)}`,
