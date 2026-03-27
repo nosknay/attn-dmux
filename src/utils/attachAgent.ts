@@ -151,7 +151,7 @@ export async function attachAgentToWorktree(
     `DMUX_WORKTREE_PATH=${sq(targetPane.worktreePath)}`,
     // Use the parent pane's branch/slug — siblings share the same git branch
     `DMUX_BRANCH=${sq(targetPane.branchName || targetPane.slug)}`,
-    `PATH=${sq(projectRoot + '/.dmux-hooks/bin')}:$PATH`,
+    `PATH=$HOME/.dmux/bin:$PATH`,
   ].join(' ');
   await tmuxService.sendShellCommand(paneInfo, envCmd);
   await tmuxService.sendTmuxKeys(paneInfo, 'Enter');

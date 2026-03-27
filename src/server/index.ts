@@ -1,9 +1,60 @@
 import { createServer, type ServerResponse } from 'http';
+import { mkdirSync, writeFileSync, chmodSync } from 'fs';
+import { homedir } from 'os';
+import path from 'path';
 import type { StateManager } from '../shared/StateManager.js';
 import { BusStore, type BusMessageType } from './BusStore.js';
 import type { AgentName } from '../utils/agentLaunch.js';
 import { isAgentName } from '../utils/agentLaunch.js';
 import { filterEnabledAgents, getInstalledAgents } from '../utils/agentDetection.js';
+
+const DMUX_BIN = path.join(homedir(), '.dmux', 'bin');
+
+function installBusScripts(): void {
+  mkdirSync(DMUX_BIN, { recursive: true });
+
+  const publish = path.join(DMUX_BIN, 'bus_publish');
+  writeFileSync(publish, `#!/bin/bash
+# Publish a message to the dmux bus.
+# Usage: bus_publish <type> <payload> [task_hint]
+type="$1" payload="$2" task_hint="\${3:-}"
+if [ -z "$type" ] || [ -z "$payload" ]; then
+  echo "Usage: bus_publish <type> <payload> [task_hint]" >&2; exit 1
+fi
+if [ -z "$DMUX_SERVER_PORT" ]; then
+  echo "[dmux] bus_publish: DMUX_SERVER_PORT not set" >&2; exit 1
+fi
+body="$(python3 -c "
+import json, sys
+hint = sys.argv[6]
+print(json.dumps({
+  'pane_id':  sys.argv[1],
+  'slug':     sys.argv[2],
+  'agent':    sys.argv[3],
+  'type':     sys.argv[4],
+  'payload':  sys.argv[5],
+  'task_hint': hint if hint else None,
+}))" "\${DMUX_PANE_ID:-}" "\${DMUX_SLUG:-}" "\${DMUX_AGENT:-}" "$type" "$payload" "$task_hint")"
+for i in 1 2 3; do
+  curl -s -X POST "http://localhost:$DMUX_SERVER_PORT/api/bus" \\
+    -H "Content-Type: application/json" -d "$body" > /dev/null && exit 0
+  sleep 1
+done
+echo "[dmux] bus_publish: server unavailable after 3 attempts" >&2; exit 1
+`);
+  chmodSync(publish, 0o755);
+
+  const read = path.join(DMUX_BIN, 'bus_read');
+  writeFileSync(read, `#!/bin/bash
+# Read messages from the dmux bus for the current session.
+# Usage: bus_read [query_params]
+if [ -z "$DMUX_SERVER_PORT" ]; then
+  echo "[dmux] bus_read: DMUX_SERVER_PORT not set" >&2; exit 1
+fi
+curl -s "http://localhost:$DMUX_SERVER_PORT/api/bus?\${1:-}"
+`);
+  chmodSync(read, 0o755);
+}
 
 // Task hint → capability tier fallback mapping
 const TASK_HINT_TIER: Record<string, 'fast' | 'smart'> = {
@@ -55,6 +106,7 @@ export async function startDmuxServer(
   stateManager: StateManager,
   port: number,
 ): Promise<void> {
+  installBusScripts();
   const busStore = new BusStore();
   const sseClients: ServerResponse[] = [];
 

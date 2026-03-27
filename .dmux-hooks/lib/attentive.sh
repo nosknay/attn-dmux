@@ -35,14 +35,17 @@ extract_jira_key() {
 bus_publish() {
   local type="$1" payload="$2" task_hint="${3:-}"
   local body
-  body="$(jq -n \
-    --arg pane_id   "$DMUX_PANE_ID" \
-    --arg slug      "$DMUX_SLUG" \
-    --arg agent     "$DMUX_AGENT" \
-    --arg type      "$type" \
-    --arg payload   "$payload" \
-    --arg task_hint "$task_hint" \
-    '{pane_id:$pane_id,slug:$slug,agent:$agent,type:$type,payload:$payload,task_hint:($task_hint|if .=="" then null else . end)}')"
+  body="$(python3 -c "
+import json, sys
+hint = sys.argv[6]
+print(json.dumps({
+  'pane_id':  sys.argv[1],
+  'slug':     sys.argv[2],
+  'agent':    sys.argv[3],
+  'type':     sys.argv[4],
+  'payload':  sys.argv[5],
+  'task_hint': hint if hint else None,
+}))" "$DMUX_PANE_ID" "$DMUX_SLUG" "$DMUX_AGENT" "$type" "$payload" "$task_hint")"
   for i in 1 2 3; do
     curl -s -X POST "http://localhost:$DMUX_SERVER_PORT/api/bus" \
       -H "Content-Type: application/json" -d "$body" > /dev/null && return 0

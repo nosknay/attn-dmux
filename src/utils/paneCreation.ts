@@ -501,7 +501,7 @@ export async function createPane(
     `DMUX_AGENT=${sq(agent || 'unknown')}`,
     `DMUX_WORKTREE_PATH=${sq(worktreePath)}`,
     `DMUX_BRANCH=${sq(branchName)}`,
-    `PATH=${sq(projectRoot + '/.dmux-hooks/bin')}:$PATH`,
+    `PATH=$HOME/.dmux/bin:$PATH`,
   ].join(' ');
   await tmuxService.sendShellCommand(paneInfo, envCmd);
   await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
