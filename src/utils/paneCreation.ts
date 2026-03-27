@@ -501,13 +501,9 @@ export async function createPane(
     `DMUX_AGENT=${sq(agent || 'unknown')}`,
     `DMUX_WORKTREE_PATH=${sq(worktreePath)}`,
     `DMUX_BRANCH=${sq(branchName)}`,
+    `PATH=${sq(projectRoot + '/.dmux-hooks/bin')}:$PATH`,
   ].join(' ');
   await tmuxService.sendShellCommand(paneInfo, envCmd);
-  await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
-
-  // Source bus helpers if available
-  const attentiveSh = `${projectRoot}/.dmux-hooks/lib/attentive.sh`;
-  await tmuxService.sendShellCommand(paneInfo, `[ -f ${sq(attentiveSh)} ] && source ${sq(attentiveSh)}`);
   await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
 
   // Launch agent if specified

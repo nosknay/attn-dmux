@@ -151,13 +151,9 @@ export async function attachAgentToWorktree(
     `DMUX_WORKTREE_PATH=${sq(targetPane.worktreePath)}`,
     // Use the parent pane's branch/slug — siblings share the same git branch
     `DMUX_BRANCH=${sq(targetPane.branchName || targetPane.slug)}`,
+    `PATH=${sq(projectRoot + '/.dmux-hooks/bin')}:$PATH`,
   ].join(' ');
   await tmuxService.sendShellCommand(paneInfo, envCmd);
-  await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
-
-  // Source bus helpers if available
-  const attentiveSh = `${projectRoot}/.dmux-hooks/lib/attentive.sh`;
-  await tmuxService.sendShellCommand(paneInfo, `[ -f ${sq(attentiveSh)} ] && source ${sq(attentiveSh)}`);
   await tmuxService.sendTmuxKeys(paneInfo, 'Enter');
 
   // Launch the agent

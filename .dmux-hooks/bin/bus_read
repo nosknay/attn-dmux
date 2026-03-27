@@ -1,0 +1,14 @@
+#!/bin/bash
+# Read messages from the dmux bus for the current session.
+# Usage: bus_read [query_params]
+# Examples:
+#   bus_read                          # all messages this session
+#   bus_read "since=42"               # only messages after id 42
+#   bus_read "type=spawned&since=42"  # filtered
+
+if [ -z "$DMUX_SERVER_PORT" ]; then
+  echo "[dmux] bus_read: DMUX_SERVER_PORT not set" >&2
+  exit 1
+fi
+
+curl -s "http://localhost:$DMUX_SERVER_PORT/api/bus?${1:-}"
