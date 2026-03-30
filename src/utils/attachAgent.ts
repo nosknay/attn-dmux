@@ -8,6 +8,7 @@
 
 import * as fs from 'fs';
 import path from 'path';
+import { atomicWriteJsonSync } from './atomicWrite.js';
 import type { DmuxPane, DmuxConfig } from '../types.js';
 import type { AgentName } from './agentLaunch.js';
 import { launchAgentInPane } from './agentLaunch.js';
@@ -190,6 +191,23 @@ export async function attachAgentToWorktree(
     permissionMode: settings.permissionMode,
     autopilot: settings.enableAutopilotByDefault ?? false,
   };
+
+  // Persist the sibling pane to the config file so the StateManager file watcher
+  // picks it up and the dmux sidebar shows it as a tracked pane (not a shell).
+  try {
+    const configPath = sessionConfigPath
+      || path.join(sessionProjectRoot, '.dmux', 'dmux.config.json');
+    const configContent = fs.readFileSync(configPath, 'utf-8');
+    const config: DmuxConfig = JSON.parse(configContent);
+    config.panes = [...(config.panes ?? []), newPane];
+    config.lastUpdated = new Date().toISOString();
+    atomicWriteJsonSync(configPath, config);
+  } catch (err) {
+    LogService.getInstance().warn(
+      `Failed to persist sibling pane to config: ${err}`,
+      'attachAgent',
+    );
+  }
 
   // Fire pane_created hook so sibling is visible to hook scripts (Gap 2).
   // DMUX_IS_SIBLING=1 lets hook scripts distinguish this from a fresh pane

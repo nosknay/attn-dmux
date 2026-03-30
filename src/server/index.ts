@@ -54,6 +54,106 @@ fi
 curl -s "http://localhost:$DMUX_SERVER_PORT/api/bus?\${1:-}"
 `);
   chmodSync(read, 0o755);
+
+  const batch = path.join(DMUX_BIN, 'dmux-batch');
+  writeFileSync(batch, `#!/bin/bash
+# Run a batch of tasks through dmux.
+# dmux must already be running (or will be started detached).
+#
+# Usage: dmux-batch <tasks.json> [project-dir]
+#
+# tasks.json format:
+#   [
+#     { "prompt": "JNY-1234: implement foo", "hint": "code-generation" },
+#     { "prompt": "JNY-1235: write tests for foo", "hint": "test-writing" }
+#   ]
+#
+# Attach to the session at any time:
+#   tmux attach -t <session printed on start>
+
+set -e
+
+TASKS_FILE="\${1:-}"
+PROJECT_DIR="\${2:-\$(pwd)}"
+PORT="\${DMUX_SERVER_PORT:-3142}"
+
+if [ -z "$TASKS_FILE" ] || [ ! -f "$TASKS_FILE" ]; then
+  echo "Usage: dmux-batch <tasks.json> [project-dir]" >&2
+  exit 1
+fi
+
+# ── Start dmux if not already running ────────────────────────────────────────
+if ! curl -s "http://localhost:\${PORT}/api/bus" > /dev/null 2>&1; then
+  echo "[dmux-batch] Starting dmux in detached session..."
+  SESSION="dmux-batch-\$(date +%s)"
+  tmux new-session -d -s "\$SESSION" -c "\$PROJECT_DIR" "cd '\$PROJECT_DIR' && dmux"
+
+  echo "[dmux-batch] Waiting for server on port \${PORT}..."
+  for i in \$(seq 1 30); do
+    curl -s "http://localhost:\${PORT}/api/bus" > /dev/null 2>&1 && break
+    sleep 1
+    if [ "\$i" -eq 30 ]; then
+      echo "[dmux-batch] Timed out waiting for dmux server" >&2; exit 1
+    fi
+  done
+  echo "[dmux-batch] Server ready."
+  echo ""
+  echo "  Connect: tmux attach -t \$SESSION"
+  echo "  Detach:  Ctrl-b d"
+  echo ""
+else
+  echo "[dmux-batch] dmux server already running on port \${PORT}"
+fi
+
+# ── Post tasks to the bus ─────────────────────────────────────────────────────
+TOTAL=\$(python3 -c "import json; print(len(json.load(open('\$TASKS_FILE'))))")
+echo "[dmux-batch] Posting \$TOTAL task(s) from \$TASKS_FILE..."
+
+python3 << PYEOF
+import json, urllib.request, urllib.error, os, time
+
+port = os.environ.get('DMUX_SERVER_PORT', '3142')
+tasks = json.load(open('\$TASKS_FILE'))
+
+for i, task in enumerate(tasks, 1):
+    prompt   = task.get('prompt', '')
+    hint     = task.get('hint', '') or None
+
+    if not prompt:
+        print(f"  [{i}/{len(tasks)}] skipped (no prompt)")
+        continue
+
+    body = json.dumps({
+        'pane_id':   '',
+        'slug':      '',
+        'agent':     '',
+        'type':      'needs-agent:worktree',
+        'payload':   prompt,
+        'task_hint': hint,
+    }).encode()
+
+    req = urllib.request.Request(
+        f'http://localhost:{port}/api/bus',
+        data=body,
+        headers={'Content-Type': 'application/json'},
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=5) as r:
+            msg = json.loads(r.read())
+            print(f"  [{i}/{len(tasks)}] queued id={msg['id']} hint={hint or '-'}: {prompt[:60]}")
+    except Exception as e:
+        print(f"  [{i}/{len(tasks)}] FAILED: {e}")
+
+    # Small delay so coordinator doesn't get flooded
+    time.sleep(0.3)
+PYEOF
+
+echo ""
+echo "[dmux-batch] All tasks queued. Panes are being spawned by dmux."
+echo "             Monitor: bus_read | python3 -m json.tool"
+`);
+  chmodSync(batch, 0o755);
 }
 
 // Task hint → capability tier fallback mapping
@@ -122,19 +222,32 @@ export async function startDmuxServer(
   busStore.on('message', async (msg) => {
     if (msg.type !== 'needs-agent:sibling' && msg.type !== 'needs-agent:worktree') return;
 
+    console.error(`[dmux-coordinator] received ${msg.type} id=${msg.id} pane=${msg.pane_id} hint=${msg.task_hint ?? '-'}`);
+
     const state = stateManager.getState();
 
     // Backpressure: ignore if a previous spawn is already in-flight for this pane
-    if (busStore.hasPendingSpawn(msg.session_id, msg.pane_id, msg.id)) return;
+    if (busStore.hasPendingSpawn(msg.session_id, msg.pane_id, msg.id)) {
+      console.error(`[dmux-coordinator] backpressure: pending spawn for pane=${msg.pane_id}, skipping id=${msg.id}`);
+      return;
+    }
 
     const agent = await resolveAgent(msg.task_hint, stateManager);
-    if (!agent) return;
+    if (!agent) {
+      console.error(`[dmux-coordinator] no agent resolved (hint=${msg.task_hint ?? '-'}, settings=${JSON.stringify((state.settings as any)?.enabledAgents ?? 'unset')})`);
+      return;
+    }
+
+    console.error(`[dmux-coordinator] spawning agent=${agent} for id=${msg.id}`);
 
     try {
       if (msg.type === 'needs-agent:sibling') {
         const panes: any[] = state.panes ?? [];
         const targetPane = panes.find((p: any) => p.id === msg.pane_id);
-        if (!targetPane?.worktreePath) return;
+        if (!targetPane?.worktreePath) {
+          console.error(`[dmux-coordinator] sibling: target pane ${msg.pane_id} not found or has no worktreePath`);
+          return;
+        }
 
         const { attachAgentToWorktree } = await import('../utils/attachAgent.js');
         const result = await attachAgentToWorktree({
@@ -146,6 +259,7 @@ export async function startDmuxServer(
           sessionConfigPath: state.panesFile ?? '',
         });
 
+        console.error(`[dmux-coordinator] spawned sibling pane slug=${result.pane.slug}`);
         busStore.append({
           session_id: msg.session_id,
           pane_id:    'dmux',
@@ -171,7 +285,8 @@ export async function startDmuxServer(
           [agent],
         );
 
-        if ('pane' in result) {
+        if (result.pane) {
+          console.error(`[dmux-coordinator] spawned worktree pane slug=${result.pane.slug}`);
           busStore.append({
             session_id: msg.session_id,
             pane_id:    'dmux',
@@ -180,11 +295,13 @@ export async function startDmuxServer(
             type:       'spawned',
             payload:    JSON.stringify({ requestId: String(msg.id), slug: result.pane.slug, agent }),
           });
+        } else {
+          console.error(`[dmux-coordinator] createPane returned no pane (needsAgentChoice=${result.needsAgentChoice})`);
         }
       }
     } catch (err) {
       // Don't crash the server on spawn errors
-      console.error('[dmux-server] spawn error:', err);
+      console.error('[dmux-coordinator] spawn error:', err);
     }
   });
 
