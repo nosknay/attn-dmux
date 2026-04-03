@@ -76,6 +76,38 @@ const POPUP_READY_POLL_INTERVAL_MS = 25;
 const POPUP_READY_TIMEOUT_MS = 4000;
 
 /**
+ * Build an environment variable prefix string so that popup subprocesses
+ * (which start a fresh shell) inherit the parent's TERM, PATH, etc.
+ * This is critical when running dmux over SSH where the popup shell may
+ * have a stripped-down environment.
+ */
+function buildPopupEnvPrefix(): string {
+  return [
+    `TERM='${process.env.TERM || 'xterm-256color'}'`,
+    process.env.COLORTERM ? `COLORTERM='${process.env.COLORTERM}'` : '',
+    `PATH='${process.env.PATH}'`,
+  ].filter(Boolean).join(' ');
+}
+
+/**
+ * Get the current tmux session name for explicit popup targeting.
+ * Over SSH the implicit client context can be ambiguous, so we always
+ * pass `-t <session>` to `display-popup`.
+ */
+function getPopupSessionTarget(): string[] {
+  try {
+    const tmuxService = TmuxService.getInstance();
+    const sessionName = tmuxService.getCurrentSessionNameSync();
+    if (sessionName) {
+      return ['-t', sessionName];
+    }
+  } catch {
+    // Fall through — omit target flag
+  }
+  return [];
+}
+
+/**
  * Calculate actual popup bounds based on tmux terminal dimensions
  */
 function calculatePopupBounds(options: PopupOptions): { x: number; y: number; width: number; height: number } {
@@ -148,6 +180,7 @@ export async function launchPopup(
   // Build tmux popup command
   const args: string[] = [
     'display-popup',
+    ...getPopupSessionTarget(),
     '-E', // Close on command exit
     '-w', width.toString(),
     '-h', height.toString(),
@@ -187,10 +220,11 @@ export async function launchPopup(
     args.push('-T', `"${title}"`);
   }
 
-  // Escape the command for tmux
+  // Escape the command for tmux, prefixing env vars for SSH compatibility
+  const envPrefix = buildPopupEnvPrefix();
   const escapedCommand = command.replace(/'/g, "'\\''");
 
-  const fullCommand = `tmux ${args.join(' ')} '${escapedCommand}'`;
+  const fullCommand = `tmux ${args.join(' ')} '${envPrefix} ${escapedCommand}'`;
 
   return new Promise((resolve) => {
     // Launch popup with spawn (non-blocking)
@@ -266,7 +300,8 @@ export async function launchNodePopup<T = any>(
     return `'${escaped}'`;
   });
 
-  const command = `node ${escapedArgs.join(' ')}`;
+  const nodeExec = process.execPath.replace(/'/g, "'\\''");
+  const command = `'${nodeExec}' ${escapedArgs.join(' ')}`;
 
   return launchPopup(command, options) as Promise<PopupResult<T>>;
 }
@@ -303,6 +338,7 @@ export function launchPopupNonBlocking(
   // Build tmux popup command
   const args: string[] = [
     'display-popup',
+    ...getPopupSessionTarget(),
     '-E', // Close on command exit
     '-w', width.toString(),
     '-h', height.toString(),
@@ -337,9 +373,10 @@ export function launchPopupNonBlocking(
     args.push('-T', `"${title}"`);
   }
 
-  // Escape the command for tmux
+  // Escape the command for tmux, prefixing env vars for SSH compatibility
+  const envPrefix = buildPopupEnvPrefix();
   const escapedCommand = command.replace(/'/g, "'\\''");
-  const fullCommand = `tmux ${args.join(' ')} '${escapedCommand}'`;
+  const fullCommand = `tmux ${args.join(' ')} '${envPrefix} ${escapedCommand}'`;
 
   // Launch popup with spawn (non-blocking)
   const child = spawn('sh', ['-c', fullCommand], {
@@ -499,11 +536,13 @@ export function launchNodePopupNonBlocking<T = any>(
     .replace(/\\/g, '\\\\')
     .replace(/'/g, "'\\''");
 
-  const command = `DMUX_POPUP_READY_FILE='${escapedReadyFile}' node ${escapedArgs.join(' ')}`;
+  const nodeExec = process.execPath.replace(/'/g, "'\\''");
+  const command = `DMUX_POPUP_READY_FILE='${escapedReadyFile}' '${nodeExec}' ${escapedArgs.join(' ')}`;
 
   // Build tmux popup command
   const tmuxArgs: string[] = [
     'display-popup',
+    ...getPopupSessionTarget(),
     '-E', // Close on command exit
     '-w', width.toString(),
     '-h', height.toString(),
@@ -538,9 +577,10 @@ export function launchNodePopupNonBlocking<T = any>(
     tmuxArgs.push('-T', `"${title}"`);
   }
 
-  // Escape the command for tmux
+  // Escape the command for tmux, prefixing env vars for SSH compatibility
+  const envPrefix = buildPopupEnvPrefix();
   const escapedCommand = command.replace(/'/g, "'\\''");
-  const fullCommand = `tmux ${tmuxArgs.join(' ')} '${escapedCommand}'`;
+  const fullCommand = `tmux ${tmuxArgs.join(' ')} '${envPrefix} ${escapedCommand}'`;
 
   // Launch popup with spawn (non-blocking)
   const child = spawn('sh', ['-c', fullCommand], {
