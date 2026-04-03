@@ -249,6 +249,20 @@ export async function createPane(
   // Check existingPanes instead of contentPaneIds, because contentPaneIds includes the welcome pane
   const isFirstContentPane = existingPanes.length === 0;
 
+  // Build DMUX_* env vars to inject at process level via tmux -e flag.
+  // This ensures the agent process has them immediately, before any
+  // send-keys export commands are processed by the shell.
+  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
+  const dmuxEnv: Record<string, string> = {
+    DMUX_ROOT: projectRoot,
+    DMUX_SERVER_PORT: String(serverPort),
+    DMUX_PANE_ID: paneId,
+    DMUX_SLUG: slug,
+    DMUX_AGENT: agent || 'unknown',
+    DMUX_WORKTREE_PATH: worktreePath,
+    DMUX_BRANCH: branchName,
+  };
+
   let paneInfo: string;
 
   // Self-healing: Try to create pane, if it fails due to stale controlPaneId, fix and retry
@@ -256,7 +270,7 @@ export async function createPane(
     if (isFirstContentPane) {
       // First, create the tmux pane but DON'T destroy welcome pane yet
       // This way we can save the pane to config first, THEN destroy welcome pane
-      paneInfo = setupSidebarLayout(controlPaneId, projectRoot);
+      paneInfo = setupSidebarLayout(controlPaneId, projectRoot, dmuxEnv);
     } else {
       // Subsequent panes - always split horizontally, let layout manager organize
       // Get actual dmux pane IDs (not welcome pane) from existingPanes
@@ -264,7 +278,7 @@ export async function createPane(
       const targetPane = dmuxPaneIds[dmuxPaneIds.length - 1]; // Split from the most recent dmux pane
 
       // Always split horizontally - the layout manager will organize panes optimally
-      paneInfo = splitPane({ targetPane, cwd: projectRoot });
+      paneInfo = splitPane({ targetPane, cwd: projectRoot, env: dmuxEnv });
     }
   } catch (error) {
     // Check if error is due to stale pane ID (can't find pane)
@@ -296,11 +310,11 @@ export async function createPane(
 
       // Retry pane creation with corrected controlPaneId
       if (isFirstContentPane) {
-        paneInfo = setupSidebarLayout(controlPaneId, projectRoot);
+        paneInfo = setupSidebarLayout(controlPaneId, projectRoot, dmuxEnv);
       } else {
         const dmuxPaneIds = existingPanes.map(p => p.paneId);
         const targetPane = dmuxPaneIds[dmuxPaneIds.length - 1];
-        paneInfo = splitPane({ targetPane, cwd: projectRoot });
+        paneInfo = splitPane({ targetPane, cwd: projectRoot, env: dmuxEnv });
       }
     } else {
       // Different error, re-throw
@@ -490,8 +504,10 @@ export async function createPane(
     // Don't throw - let the pane stay open so user can debug
   }
 
+  // Re-export DMUX_* vars in the interactive shell so manual bus_publish
+  // calls and sub-shells also see them, and prepend ~/.dmux/bin to PATH
+  // (PATH can't be set via tmux -e because it needs shell expansion).
   const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
-  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
   const envCmd = [
     'export',
     `DMUX_ROOT=${sq(projectRoot)}`,

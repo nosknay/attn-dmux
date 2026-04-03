@@ -96,10 +96,24 @@ export async function attachAgentToWorktree(
     controlPaneId = originalPaneId;
   }
 
+  // Build DMUX_* env vars to inject at process level via tmux -e flag.
+  // This ensures the agent process has them immediately, before any
+  // send-keys export commands are processed by the shell.
+  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
+  const dmuxEnv: Record<string, string> = {
+    DMUX_ROOT: projectRoot,
+    DMUX_SERVER_PORT: String(serverPort),
+    DMUX_PANE_ID: siblingPaneId,
+    DMUX_SLUG: slug,
+    DMUX_AGENT: agent,
+    DMUX_WORKTREE_PATH: targetPane.worktreePath,
+    DMUX_BRANCH: targetPane.branchName || targetPane.slug,
+  };
+
   // Split from the last existing pane (standard grid placement)
   const dmuxPaneIds = existingPanes.map(p => p.paneId);
   const splitTarget = dmuxPaneIds[dmuxPaneIds.length - 1];
-  const paneInfo = splitPane({ targetPane: splitTarget, cwd: projectRoot });
+  const paneInfo = splitPane({ targetPane: splitTarget, cwd: projectRoot, env: dmuxEnv });
 
   // Wait for pane to be ready
   const start = Date.now();
@@ -140,8 +154,10 @@ export async function attachAgentToWorktree(
   // Small delay for cd to complete
   await new Promise(r => setTimeout(r, 300));
 
+  // Re-export DMUX_* vars in the interactive shell so manual bus_publish
+  // calls and sub-shells also see them, and prepend ~/.dmux/bin to PATH
+  // (PATH can't be set via tmux -e because it needs shell expansion).
   const sq = (v: string) => `'${v.replace(/'/g, "'\\''")}'`;
-  const serverPort = StateManager.getInstance().getState().serverPort ?? 3142;
   const envCmd = [
     'export',
     `DMUX_ROOT=${sq(projectRoot)}`,

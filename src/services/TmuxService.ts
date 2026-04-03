@@ -521,6 +521,7 @@ export class TmuxService {
     targetPane?: string;
     cwd?: string;
     command?: string;
+    env?: Record<string, string>;
   } = {}): Promise<string> {
     return this.executeWithRetry(
       () => {
@@ -531,6 +532,12 @@ export class TmuxService {
         }
         if (options.cwd) {
           cmd += ` -c "${options.cwd}"`;
+        }
+        if (options.env) {
+          for (const [key, value] of Object.entries(options.env)) {
+            const escaped = value.replace(/'/g, "'\\''");
+            cmd += ` -e '${key}=${escaped}'`;
+          }
         }
         if (options.command) {
           cmd += ` "${options.command}"`;
@@ -1118,6 +1125,7 @@ export class TmuxService {
     targetPane?: string;
     cwd?: string;
     command?: string;
+    env?: Record<string, string>;
   } = {}): string {
     let cmd = 'tmux split-window -h -P -F \'#{pane_id}\'';
 
@@ -1126,6 +1134,12 @@ export class TmuxService {
     }
     if (options.cwd) {
       cmd += ` -c "${options.cwd}"`;
+    }
+    if (options.env) {
+      for (const [key, value] of Object.entries(options.env)) {
+        const escaped = value.replace(/'/g, "'\\''");
+        cmd += ` -e '${key}=${escaped}'`;
+      }
     }
     if (options.command) {
       cmd += ` "${options.command}"`;
